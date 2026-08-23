@@ -716,6 +716,44 @@ impl<'a> Comments<'a> {
         self.all_comments_in_range(start, end).any(Comment::followed_by_newline)
     }
 
+    /// Whether `(start, end)` contains a comment after `character`, including already-printed
+    /// comments. The range must contain only trivia and the operator being searched for.
+    pub fn has_comment_after_character_in_range(
+        &self,
+        mut start: u32,
+        end: u32,
+        character: u8,
+    ) -> bool {
+        for comment in self.all_comments_in_range(start, end) {
+            if self.source_text.bytes_contain(start, comment.span.start, character) {
+                return true;
+            }
+            start = comment.span.end;
+        }
+        false
+    }
+
+    /// Whether `(start, end)` contains an inline single-line comment before `character`, including
+    /// already-printed comments. The range must contain only trivia and the operator being searched
+    /// for.
+    pub fn has_inline_single_line_comment_before_character_in_range(
+        &self,
+        mut start: u32,
+        end: u32,
+        character: u8,
+    ) -> bool {
+        for comment in self.all_comments_in_range(start, end) {
+            if self.source_text.bytes_contain(start, comment.span.start, character) {
+                return false;
+            }
+            if !comment.preceded_by_newline() && !comment.is_multiline_block() {
+                return true;
+            }
+            start = comment.span.end;
+        }
+        false
+    }
+
     /// Whether the first non-whitespace byte after `pos` outside comments is `)`.
     pub(crate) fn is_followed_by_closing_paren(&self, pos: u32) -> bool {
         // Only a comment can hide the `)`, so anything but `/` answers without touching the comments;

@@ -28,7 +28,7 @@ impl<'a> FormatWrite<'a> for AstNode<'_, 'a, ArrowFunctionExpression<'a>> {
         let options = FormatJsArrowFunctionExpressionOptions {
             // Handed over by `WithAssignmentLayout` when this arrow is the RHS of an assignment-like;
             // the span key ensures only this arrow can consume it.
-            assignment_layout: f.context_mut().take_arrow_assignment_layout(self.span()),
+            assignment_layout: f.context_mut().take_assignment_layout(self.span()),
             ..FormatJsArrowFunctionExpressionOptions::default()
         };
         FormatJsArrowFunctionExpression::new_with_options(self, options).fmt(f);

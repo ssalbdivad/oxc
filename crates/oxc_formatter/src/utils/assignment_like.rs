@@ -392,7 +392,16 @@ impl<'a, 'b> AssignmentLike<'a, 'b> {
                 write!(f, [with_assignment_layout(&property.value().unwrap(), Some(layout))]);
             }
             Self::TSTypeAliasDeclaration(declaration) => {
-                write!(f, [declaration.type_annotation()]);
+                if f.options().experimental_ternaries
+                    && let AstNodeKind::TSConditionalType(conditional) =
+                        &declaration.type_annotation().as_kind()
+                {
+                    f.context_mut().set_assignment_layout(conditional.span(), layout);
+                    conditional.fmt(f);
+                    f.context_mut().clear_assignment_layout();
+                } else {
+                    write!(f, [declaration.type_annotation()]);
+                }
             }
         }
     }
@@ -427,6 +436,24 @@ impl<'a, 'b> AssignmentLike<'a, 'b> {
 
         if self.should_break_left_hand_side(right_shape, left_may_break) {
             return AssignmentLikeLayout::BreakLeftHandSide;
+        }
+
+        // Prettier's conditional group contains multiline branch comments without forcing the
+        // surrounding assignment group to break. Oxfmt propagates expanded child groups, so keep
+        // the assignment operator adjacent explicitly for this equivalent observable layout.
+        if f.options().experimental_ternaries
+            && matches!(self, AssignmentLike::AssignmentExpression(_))
+            && let Some(Expression::ConditionalExpression(conditional)) = right_shape
+            && f.comments()
+                .comments_in_range(conditional.span.start, conditional.span.end)
+                .iter()
+                .any(|comment| {
+                    comment.is_block()
+                        && f.source_text()
+                            .contains_newline_between(comment.span.start, comment.span.end)
+                })
+        {
+            return AssignmentLikeLayout::NeverBreakAfterOperator;
         }
 
         // An alias-level union that runs its own printer owns the break and indentation under the `=`;
@@ -700,6 +727,10 @@ impl<'a, 'b> AssignmentLike<'a, 'b> {
             // For TSTypeAliasDeclaration, check if the type annotation is a union type with comments
             match &decl.type_annotation {
                 TSType::TSConditionalType(conditional_type) => {
+                    if f.options().experimental_ternaries {
+                        return true;
+                    }
+
                     let is_generic = |ts_type: &TSType<'a>| -> bool {
                         match ts_type {
                             TSType::TSFunctionType(function) => function.type_parameters.is_some(),
@@ -849,15 +880,22 @@ fn should_break_after_operator<'a>(
         Expression::LogicalExpression(logical) => {
             !BinaryLikeExpression::can_inline_logical_expr(logical)
         }
-        Expression::ConditionalExpression(conditional) => match &conditional.test {
-            // A cast-parenthesized test is opaque, same as the whole-RHS case above
-            test if is_cast_target(test.span(), f) => false,
-            Expression::BinaryExpression(_) => true,
-            Expression::LogicalExpression(logical) => {
-                !BinaryLikeExpression::can_inline_logical_expr(logical)
+        Expression::ConditionalExpression(conditional) => {
+            if f.options().experimental_ternaries {
+                matches!(conditional.consequent, Expression::ConditionalExpression(_))
+                    || matches!(conditional.alternate, Expression::ConditionalExpression(_))
+            } else {
+                match &conditional.test {
+                    // A cast-parenthesized test is opaque, same as the whole-RHS case above
+                    test if is_cast_target(test.span(), f) => false,
+                    Expression::BinaryExpression(_) => true,
+                    Expression::LogicalExpression(logical) => {
+                        !BinaryLikeExpression::can_inline_logical_expr(logical)
+                    }
+                    _ => false,
+                }
             }
-            _ => false,
-        },
+        }
         Expression::ClassExpression(class) => !class.decorators.is_empty(),
         // Based on https://github.com/prettier/prettier/blob/0273e33fc691e28e4ab3f3c8ee86918b65cf823d/src/language-js/print/assignment.js#L235-L263
         _ if is_left_short => false,
@@ -1057,17 +1095,23 @@ pub fn with_assignment_layout<'a, 'b>(
 
 impl<'a> Format<'a, JsFormatContext<'a>> for WithAssignmentLayout<'a, '_> {
     fn fmt(&self, f: &mut JsFormatter<'_, 'a>) {
-        // An arrow needs the layout inside its `write`,
+        // An arrow (and, under experimental ternaries, a conditional) needs the layout inside its `write`,
         // which is reached through the shared generated `fmt` (suppression, type casts, parentheses, comments);
         // the span-keyed context slot hands it across that frame.
-        // A cast target has no shape; the layout never reaches the arrow inside.
-        if let (Some(layout), AstNodeKind::ArrowFunctionExpression(arrow)) =
-            (self.layout, &self.expression.as_kind())
-            && !is_cast_target(arrow.span(), f)
+        // A cast target has no shape; the layout never reaches the node inside.
+        let kind = self.expression.as_kind();
+        let takes_layout = match &kind {
+            AstNodeKind::ArrowFunctionExpression(_) => true,
+            AstNodeKind::ConditionalExpression(_) => f.options().experimental_ternaries,
+            _ => false,
+        };
+        if let Some(layout) = self.layout
+            && takes_layout
+            && !is_cast_target(self.expression.span(), f)
         {
-            f.context_mut().set_arrow_assignment_layout(arrow.span(), layout);
-            arrow.fmt(f);
-            f.context_mut().clear_arrow_assignment_layout();
+            f.context_mut().set_assignment_layout(self.expression.span(), layout);
+            self.expression.fmt(f);
+            f.context_mut().clear_assignment_layout();
         } else {
             self.expression.fmt(f);
         }
@@ -1274,6 +1318,26 @@ fn is_short_argument(argument: &Expression, threshold: u16, f: &JsFormatter) -> 
         | Expression::NumericLiteral(_) => true,
         _ => false,
     }
+}
+
+/// Prettier's short-argument predicate, including its requirement that the expression has no
+/// attached comments. `test_end` and `alternate_start` include comments adjacent to the expression
+/// because Oxc's AST spans exclude them. Kept separate from [`is_short_argument`] to avoid changing
+/// legacy assignment layout.
+pub(super) fn is_lone_short_argument(
+    argument: &Expression,
+    test_end: u32,
+    alternate_start: u32,
+    f: &JsFormatter<'_, '_>,
+) -> bool {
+    let comments = f.comments();
+    !comments.has_comment_after_character_in_range(test_end, argument.span().start, b'?')
+        && !comments.has_inline_single_line_comment_before_character_in_range(
+            argument.span().end,
+            alternate_start,
+            b':',
+        )
+        && is_short_argument(argument, f.options().line_width.value() / 4, f)
 }
 
 /// This function checks if `TSTypeArguments` is complex.

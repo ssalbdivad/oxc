@@ -251,6 +251,7 @@ const COMPATIBLE_OPTIONS = new Set([
   "embeddedLanguageFormatting",
   "endOfLine",
   "experimentalOperatorPosition",
+  "experimentalTernaries",
   "htmlWhitespaceSensitivity",
   "jsxSingleQuote",
   "objectWrap",

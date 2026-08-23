@@ -103,7 +103,6 @@ Any option not in "Prettier-Compatible Options" below is skipped with a warning,
 | Option                          | Status                                                                    |
 | ------------------------------- | ------------------------------------------------------------------------- |
 | `endOfLine: "auto"`             | Not supported. Use `"lf"` or `"crlf"` explicitly                          |
-| `experimentalTernaries`         | Not supported                                                             |
 | `requirePragma`, `insertPragma` | Not supported                                                             |
 | `parser`                        | Skipped at top-level. In `overrides`, migrated to `associations` if known |
 | `plugins`                       | Only known plugins are migrated (see Step 1)                              |
