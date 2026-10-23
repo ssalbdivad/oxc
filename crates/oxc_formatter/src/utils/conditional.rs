@@ -945,7 +945,7 @@ impl<'a> FormatConditionalLike<'a, '_> {
 
             let fill_tab = format_with(|f| {
                 if use_tabs {
-                    write!(f, [text("\t")]);
+                    write!(f, [content_tab()]);
                 } else {
                     const SPACES: &str = "                                ";
                     write!(f, [text(&SPACES[..usize::from(fill_width)])]);

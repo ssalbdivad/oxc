@@ -196,9 +196,10 @@ impl<'a> FormatWrite<'a> for AstNode<'_, 'a, TSUnionType<'a>> {
                 AstNodes::TSTypeAssertion(_)
                 | AstNodes::TSTupleType(_)
                 | AstNodes::TSTypeParameterInstantiation(_) => false,
-                // A check/extends-position union falls through to `_ => true`
+                // A check/extends-position union falls through to `_ => true`.
+                // Experimental ternaries indent the branch themselves (Prettier's `shouldIndentUnionType`).
                 AstNodes::TSConditionalType(_) if is_conditional_branch => {
-                    before_pipe_comments.is_empty()
+                    !f.options().experimental_ternaries && before_pipe_comments.is_empty()
                 }
                 _ => true,
             }

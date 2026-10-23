@@ -291,6 +291,14 @@ pub fn text_without_whitespace(text: &str) -> Text<'_> {
     Text { text, width: Some(TextWidth::from_non_whitespace_str(text)), expand_parent: true }
 }
 
+/// Creates a tab printed as content rather than indentation (e.g. an alignment tab after an operator).
+///
+/// Measured as zero columns, matching Prettier:
+/// its `getStringWidth` skips control characters, so a literal `"\t"` doc never counts towards the print width.
+pub fn content_tab() -> Text<'static> {
+    Text { text: "\t", width: Some(TextWidth::single(0)), expand_parent: true }
+}
+
 #[derive(Eq, PartialEq)]
 pub struct Text<'a> {
     #[expect(clippy::struct_field_names)] // Keep the name the same as it is in the original source

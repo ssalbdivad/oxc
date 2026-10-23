@@ -1,0 +1,19 @@
+// A union branch is indented by the conditional, not by the union itself
+type A<t> =
+	t extends string ? "string"
+	: t extends boolean ?
+		| "boolean"
+		| ([t] extends [boolean] ? never : typeToString<Exclude<t, boolean>, opts>)
+	:	never;
+
+type B<fn, result> =
+	result & fn extends (...args: infer args) => infer returns ?
+		result extends fn ?
+			never
+		:	| collectSignatures<
+					fn,
+					givenArgs,
+					Pick<fn, keyof fn> & result & ((...args: args) => returns)
+			  >
+			| (args extends givenArgs ? (...args: args) => returns : never)
+	:	never;
