@@ -1,0 +1,111 @@
+name: Build @ark/oxfmt
+
+# Builds the oxfmt Node CLI from this fork for three platforms and assembles one
+# ready-to-publish `@ark/oxfmt` package (uploaded as an artifact, never published here).
+
+permissions: {}
+
+on:
+  workflow_dispatch:
+    inputs:
+      prerelease:
+        description: "Prerelease number, i.e. N in <oxfmt version>-ternaries.N"
+        default: "0"
+  # A workflow only on a non-default branch is unknown to `workflow_dispatch` until a push runs it
+  push:
+    branches: [experimental-ternaries]
+    paths: [.github/workflows/ark_oxfmt.yml, .github/scripts/ark-oxfmt-package.ts]
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            target: x86_64-unknown-linux-gnu
+            build: pnpm run build-napi-release --target x86_64-unknown-linux-gnu --use-napi-cross
+          - os: macos-latest
+            target: aarch64-apple-darwin
+            build: pnpm run build-napi-release --target aarch64-apple-darwin
+          - os: windows-latest
+            target: x86_64-pc-windows-msvc
+            build: pnpm run build-napi-release --target x86_64-pc-windows-msvc
+    name: Build ${{ matrix.target }}
+    runs-on: ${{ matrix.os }}
+    permissions:
+      contents: read
+    env:
+      # Same as `release_apps.yml`: clang for mimalloc, except on MSVC where cc-rs picks `cl.exe`
+      TARGET_CC: ${{ !contains(matrix.target, 'pc-windows-msvc') && 'clang' || '' }}
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - if: ${{ contains(matrix.os, 'windows') }}
+        run: git config --system core.longpaths true
+
+      - uses: taiki-e/checkout-action@7d1e50e93dc4fb3bba58f85018fadf77898aee8b # v1.4.2
+
+      - uses: oxc-project/setup-node@f46a72f95efdc55273fcd042d61c84e723b2892c # v1.4.1
+
+      - run: rustup target add ${{ matrix.target }}
+
+      - name: Build oxfmt for node.js
+        working-directory: apps/oxfmt
+        run: ${{ matrix.build }}
+
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          if-no-files-found: error
+          name: oxfmt-binding-${{ matrix.target }}
+          path: apps/oxfmt/src-js/*.node
+
+  package:
+    name: Assemble @ark/oxfmt
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: taiki-e/checkout-action@7d1e50e93dc4fb3bba58f85018fadf77898aee8b # v1.4.2
+
+      - uses: oxc-project/setup-node@f46a72f95efdc55273fcd042d61c84e723b2892c # v1.4.1
+
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          pattern: oxfmt-binding-*
+          path: apps/oxfmt/src-js
+          merge-multiple: true
+
+      - name: Build JS dist (copies the bindings into dist/)
+        working-directory: apps/oxfmt
+        run: pnpm run build-js
+
+      - name: Assemble package
+        env:
+          PRERELEASE: ${{ inputs.prerelease || '0' }}
+        run: node .github/scripts/ark-oxfmt-package.ts ark-oxfmt/package --prerelease "$PRERELEASE"
+
+      - name: Smoke test (linux)
+        working-directory: ark-oxfmt
+        run: |
+          (cd package && npm pack --pack-destination ..)
+          mkdir try && cd try
+          echo '{"private":true}' > package.json
+          npm install ../ark-oxfmt-*.tgz
+          npx oxfmt --version
+          echo '{"experimentalTernaries":true,"printWidth":40}' > .oxfmtrc.json
+          printf 'const x = aaaaaaaaaaaa ? bbbbbbbbbbbbbbb : cccccccccccc\n' > t.ts
+          printf '# t\n\n*   item\n' > t.md
+          npx oxfmt t.ts t.md
+          cat t.ts t.md
+          grep -q '^	*aaaaaaaaaaaa ?$' t.ts || grep -q '^  aaaaaaaaaaaa ?$' t.ts
+          grep -q '^- item$' t.md
+          cd .. && rm -rf try
+
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          if-no-files-found: error
+          name: ark-oxfmt
+          path: ark-oxfmt
