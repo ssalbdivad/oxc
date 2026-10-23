@@ -122,18 +122,18 @@ fn function_like_type_needs_parentheses<'a>(
 
             let is_extends_type = conditional.extends_type().span() == span;
             if is_extends_type {
-                // Need parentheses if return type is TSInferType with constraint
-                // or TSTypePredicate with type annotation
-                if let Some(return_type) = return_type {
-                    match &return_type.type_annotation {
-                        TSType::TSInferType(infer_type) => {
-                            return infer_type.type_parameter.constraint.is_some();
-                        }
-                        TSType::TSTypePredicate(predicate) => {
-                            return predicate.type_annotation.is_some();
-                        }
-                        _ => {}
-                    }
+                // Need parentheses if the return type (or the type of a type predicate) is
+                // an `infer` with a constraint, whose `extends` would be read as the conditional's
+                let return_type =
+                    return_type.map(|return_type| match &return_type.type_annotation {
+                        TSType::TSTypePredicate(predicate) => predicate
+                            .type_annotation
+                            .as_ref()
+                            .map(|annotation| &annotation.type_annotation),
+                        ty => Some(ty),
+                    });
+                if let Some(Some(TSType::TSInferType(infer_type))) = return_type {
+                    return infer_type.type_parameter.constraint.is_some();
                 }
             }
             false
